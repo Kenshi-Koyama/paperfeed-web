@@ -133,3 +133,17 @@ dialog figure img.big { max-width: none; width: 62rem; cursor: zoom-out; }
 .item .t { font-family: var(--en-font); font-size: 1.05rem; line-height: 1.4; }
 .item .m { color: var(--muted); font-size: .85rem; margin-top: .3rem; }
 .msg { color: var(--muted); padding: 3rem 1rem; text-align: center; }
+
+/* 4-3 */
+.sync { font-size: .72rem; color: var(--muted); white-space: nowrap; }
+.sync[data-s="pending"] { color: #b3261e; font-weight: 600; }
+.memo .saved.empty { color: var(--muted); background: transparent; border-left-color: var(--border); }
+.resume { background: var(--surface); border: 2px solid var(--accent); border-radius: .9rem; padding: 1rem 1.1rem; margin: .8rem 0 1.4rem; }
+.resume .lab { font-size: .78rem; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
+.resume .t { display: block; font-family: var(--en-font); font-size: 1.2rem; line-height: 1.4; margin: .3rem 0; color: var(--text); text-decoration: none; }
+.resume .m { color: var(--muted); font-size: .85rem; }
+.resume .acts { display: flex; gap: .7rem; align-items: center; margin-top: .8rem; }
+.resume .btn { margin: 0; width: auto; padding: .6rem 1.4rem; text-decoration: none; display: inline-block; }
+.resume .icon { text-decoration: none; color: inherit; }
+.list .sub { font-size: .8rem; color: var(--muted); margin-top: 1.2rem; }
+@media (max-width: 40rem) { .sync { display: none; } .bar .sync[data-s="pending"] { display: block; } }

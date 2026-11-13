@@ -2,12 +2,16 @@
 // 本文・画像・PDF は Supabase の非公開の置き場から、ログイン後に取得する。
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
+import { createSync } from "./sync.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const sync = createSync(sb);
+const SYNC_LABEL = { ok: "保存済み", saving: "保存中…", pending: "未送信（通信が戻ると保存します）" };
+sync.onStatus((st) => { const e = $("#sync"); if (e) { e.textContent = SYNC_LABEL[st]; e.dataset.s = st; } });
 const BUCKET = "papers";
 const SIGN_SECONDS = 6 * 3600;
 
-const $ = (s, r = document) => r.querySelector(s);
+function $(s, r = document) { return r.querySelector(s); }
 const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
 const app = $("#app");
 
@@ -34,6 +38,7 @@ function newView() {
 async function route() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return showLogin();
+  sync.setUser(session.user.id);
   const m = location.hash.match(/^#\/p\/([A-Za-z0-9]+)(?:\/([\w-]+))?/);
   if (m) return showPaper(session.user.id, m[1], m[2]);
   return showList();
@@ -67,13 +72,26 @@ async function showList() {
   document.title = "PaperFeed";
   app.innerHTML = `<div class="list"><div class="top"><h1>精読する論文</h1><button class="icon" id="out">ログアウト</button></div><div id="items" class="msg">読み込み中…</div></div>`;
   $("#out").onclick = () => sb.auth.signOut();
-  const { data, error } = await sb.from("papers").select("zotero_key,title,authors,journal,year,tags,has_fulltext").order("updated_at", { ascending: false });
+  const [{ data, error }, state] = await Promise.all([
+    sb.from("papers").select("zotero_key,title,authors,journal,year,tags,has_fulltext").order("updated_at", { ascending: false }),
+    sync.loadState(),
+  ]);
   const box = $("#items");
   if (error) { box.textContent = "論文の一覧を取得できませんでした。"; return; }
   const rows = data.filter((p) => p.has_fulltext && (p.tags || []).includes("PaperFeed_CloseReading"));
   if (!rows.length) { box.textContent = "精読できる論文がまだありません。"; return; }
   box.className = ""; box.innerHTML = "";
+  const last = state && rows.find((p) => p.zotero_key === state.zotero_key);
+  if (last) {
+    const c = el("div", "resume");
+    c.innerHTML = `<div class="lab">続きから読む</div><a class="t" href="#/p/${last.zotero_key}">${safe(last.title)}</a>
+      <div class="m">${safe(last.authors)} · ${safe(last.journal)} (${last.year || ""})</div>
+      <div class="acts"><a class="btn go" href="#/p/${last.zotero_key}">続きを読む</a><a class="icon" href="#/p/${last.zotero_key}/top">最初から読む</a></div>`;
+    box.append(c);
+    box.append(el("div", "sub", "ほかの論文"));
+  }
   for (const p of rows) {
+    if (p === last) continue;
     const a = el("a", "item");
     a.href = "#/p/" + p.zotero_key;
     a.innerHTML = `<div class="t">${safe(p.title)}</div><div class="m">${safe(p.authors)} · ${safe(p.journal)} (${p.year || ""})</div>`;
@@ -90,6 +108,10 @@ async function showPaper(uid, key, jumpTo) {
   if (signal.aborted) return;
   if (dl.error) { app.innerHTML = `<div class="msg">この論文を開けませんでした。<br><a href="#/">一覧へ戻る</a></div>`; return; }
   const P = JSON.parse(await dl.data.text());
+  const saved = await sync.loadPaper(key);
+  const state = await sync.loadState();
+  if (signal.aborted) return;
+  const notes = saved.notes; // { 段落の番号: { body, ts } }
 
   // 画像と PDF は、期限付きの URL で取得する
   const imgPaths = [...P.floats.map((f) => f.image), ...P.elements.filter((e) => e.type === "equation").map((e) => e.image)].filter(Boolean);
@@ -116,10 +138,11 @@ async function showPaper(uid, key, jumpTo) {
       <div class="ttl" id="barTitle"></div>
       <div class="seg" role="group" aria-label="表示する言語">
         <button data-mode="en">English</button><button data-mode="ja">日本語</button><button data-mode="both">両方</button>
-      </div><div class="prog" id="prog"></div></div>
+      </div><div class="sync" id="sync" role="status"></div><div class="prog" id="prog"></div></div>
     <nav class="toc" id="toc" aria-label="目次"></nav><div class="shade" id="shade"></div><main id="main"></main>`;
   const main = $("#main"), toc = $("#toc");
   const m = P.meta;
+  $("#sync").textContent = SYNC_LABEL[sync.status()]; $("#sync").dataset.s = sync.status();
   $("#barTitle").textContent = m.title;
   document.title = m.title + " — PaperFeed";
 
@@ -128,6 +151,9 @@ async function showPaper(uid, key, jumpTo) {
   head.innerHTML = `<h1>${safe(m.title)}</h1><p class="tja">${safe(m.title_ja)}</p>
     <p class="by">${safe((m.authors || []).join(", "))} · ${safe(m.journal)} ${m.volume || ""} (${m.year}) ${m.pages || ""} ${pdfUrl ? "· " + pdfLink(1, "元の PDF を開く") : ""}</p>`;
   main.append(head);
+  const whole = el("details", "card"); whole.id = "paperMemo";
+  whole.innerHTML = `<summary>この論文のメモ</summary><div class="memo" style="margin-top:.6rem"></div>`;
+  main.append(whole);
   if (P.summary) {
     const card = el("details", "card"); card.open = true;
     const labelsJa = { rq: "何を明らかにするか", motivation: "なぜ必要か", method: "方法", results: "結果", point: "要点" };
@@ -182,8 +208,8 @@ async function showPaper(uid, key, jumpTo) {
     const u = el("div", "unit"); u.id = e.id;
     const en = e.type === "list" ? "<ul>" + e.items.map((x) => `<li>${rich(x)}</li>`).join("") + "</ul>" : rich(e.text);
     const ja = e.type === "list" ? "<ul>" + (e.items_ja || []).map((x) => `<li>${rich(x)}</li>`).join("") + "</ul>" : rich(e.text_ja);
-    u.innerHTML = `<span class="num">${e.n || "·"}</span><div class="en" lang="en">${en}</div><div class="ja">${ja}</div>`;
-    main.append(u);
+    u.innerHTML = `<button class="num" title="メモを書く" aria-label="段落 ${e.n || ""} にメモを書く">${e.n || "·"}</button><div class="en" lang="en">${en}</div><div class="ja">${ja}</div>`;
+    main.append(u); renderMemo(u);
     for (const f of P.floats) if (!placed.has(f.id) && !inAppendix(f) && mentions(e, f)) { main.append(floatNode(f)); placed.add(f.id); }
   }
   for (const f of P.floats) if (!placed.has(f.id)) main.append(floatNode(f));
@@ -206,13 +232,14 @@ async function showPaper(uid, key, jumpTo) {
   // 表示の切り替え
   const units = [...document.querySelectorAll("main .unit[id^='e']")];
   const currentUnit = () => units.find((u) => u.getBoundingClientRect().bottom > 80) || null;
-  const setMode = (mode) => {
+  const setMode = (mode, save = true) => {
     const anchor = currentUnit();
     document.body.dataset.mode = mode;
     document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === mode));
     document.querySelectorAll(".unit.flip").forEach((u) => u.classList.remove("flip"));
     pref.set("mode", mode);
     if (anchor) anchor.scrollIntoView({ block: "start" });
+    if (save) sync.saveAppState(key, "CloseReading", mode);
   };
   document.querySelectorAll(".seg button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
 
@@ -241,18 +268,74 @@ async function showPaper(uid, key, jumpTo) {
     const j = ev.target.closest("a[data-jump]");
     if (j) { ev.preventDefault(); jump(j.dataset.jump); return; }
     if (ev.target.tagName === "IMG" && ev.target.closest("figure.float")) { openFloat(ev.target.closest("figure.float").id); return; }
-    if (ev.target.closest("a, textarea")) return;
+    const num = ev.target.closest(".num");
+    if (num && num.closest(".unit[id^='e']")) { editMemo(num.closest(".unit")); return; }
+    if (ev.target.closest("a, textarea, .memo")) return;
     const body = ev.target.closest(".unit > .en, .unit > .ja");
     if (body && document.body.dataset.mode !== "both" && !String(getSelection()).trim()) body.parentElement.classList.toggle("flip");
   }, { signal });
+  let posTimer, lastSaved = saved.position, started = false;
+  const savePos = () => {
+    const u = currentUnit();
+    if (u && u.id !== lastSaved) { lastSaved = u.id; sync.savePosition(key, u.id); }
+  };
   addEventListener("scroll", () => {
     const h = document.documentElement;
     $("#prog").style.width = (100 * h.scrollTop / Math.max(1, h.scrollHeight - h.clientHeight)) + "%";
+    clearTimeout(posTimer); if (started) posTimer = setTimeout(savePos, 1500);
   }, { passive: true, signal });
+  addEventListener("pagehide", () => { clearTimeout(posTimer); if (started) savePos(); }, { signal });
 
-  setMode(pref.get("mode", matchMedia("(min-width: 60rem)").matches ? "both" : "en"));
-  scrollTo({ top: 0 });
-  if (jumpTo) jump(jumpTo, false);
+  // メモ
+  function memoBox(u) { let b = $(".memo", u); if (!b) { b = el("div", "memo"); u.append(b); } return b; }
+  function renderMemo(u) {
+    const text = (notes[u.id] || {}).body;
+    $(".num", u).classList.toggle("has", !!text);
+    const box = $(".memo", u);
+    if (!text) { if (box) box.remove(); return; }
+    const b = memoBox(u); b.innerHTML = "";
+    const s = el("div", "saved"); s.textContent = text; s.title = "押して編集"; s.onclick = () => editMemo(u); b.append(s);
+  }
+  function editor(box, para, done) {
+    if ($("textarea", box)) return;
+    box.innerHTML = "";
+    const ta = el("textarea"); ta.value = (notes[para] || {}).body || ""; ta.placeholder = "メモ（入力をやめると自動で保存）";
+    box.append(ta); ta.focus();
+    let timer;
+    const save = () => {
+      const v = ta.value.trim();
+      if (v === ((notes[para] || {}).body || "")) return;
+      notes[para] = { body: v, ts: new Date().toISOString() };
+      sync.saveNote(key, para, v);
+    };
+    ta.oninput = () => { clearTimeout(timer); timer = setTimeout(save, 600); };
+    ta.onblur = () => { clearTimeout(timer); save(); done(); };
+  }
+  function editMemo(u) { editor(memoBox(u), u.id, () => renderMemo(u)); }
+  const pm = $(".memo", $("#paperMemo"));
+  const renderPaperMemo = () => {
+    const text = (notes[""] || {}).body;
+    pm.innerHTML = "";
+    const s = el("div", text ? "saved" : "saved empty"); s.textContent = text || "メモを書く"; s.onclick = () => editor(pm, "", renderPaperMemo); pm.append(s);
+    $("#paperMemo > summary").textContent = text ? "この論文のメモ（あり）" : "この論文のメモ";
+  };
+  renderPaperMemo();
+
+  const lang = (state && state.settings && state.settings.lang) || pref.get("mode", matchMedia("(min-width: 60rem)").matches ? "both" : "en");
+  setMode(lang, false);
+  sync.saveAppState(key, "CloseReading", lang); // 「最後に読んだ論文」として覚える
+  const first = units[0] && units[0].id;
+  if (jumpTo && jumpTo !== "top") { jump(jumpTo, false); }
+  else if (!jumpTo && saved.position && saved.position !== first && document.getElementById(saved.position)) {
+    document.getElementById(saved.position).scrollIntoView({ block: "start" });
+    const e = P.elements.find((x) => x.id === saved.position);
+    const toast = el("div", "toast", `<span>前回の続き（段落 ${(e && e.n) || ""}）から開きました</span><button>最初から読む</button>`);
+    toast.style.display = "flex"; document.body.append(toast);
+    toast.querySelector("button").onclick = () => { scrollTo({ top: 0 }); toast.remove(); };
+    signal.addEventListener("abort", () => toast.remove());
+    setTimeout(() => toast.remove(), 6000);
+  } else { scrollTo({ top: 0 }); }
+  setTimeout(() => { started = true; }, 800); // 開いた直後の位置の飛びは、読んだ位置として保存しない
 }
 
 route();
