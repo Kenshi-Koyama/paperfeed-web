@@ -1,13 +1,13 @@
 :root {
   --bg: #faf9f6; --surface: #ffffff; --text: #1f2328; --muted: #6b7280;
-  --accent: #2f5d8a; --tint: #f1efe8; --border: #e3e0d8; --mark: #fff3bf;
+  --accent: #2f5d8a; --tint: #f1efe8; --border: #e3e0d8; --mark: #fff3bf; --hl: #ffe45c;
   --en-font: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --ja-font: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16181c; --surface: #1d2025; --text: #e6e4df; --muted: #9aa0a6;
-    --accent: #8ab4e8; --tint: #22262c; --border: #30353c; --mark: #4a4420;
+    --accent: #8ab4e8; --tint: #22262c; --border: #30353c; --mark: #4a4420; --hl: rgba(255, 214, 10, .42);
   }
 }
 * { box-sizing: border-box; }
@@ -128,7 +128,8 @@ dialog figure img.big { max-width: none; width: 62rem; cursor: zoom-out; }
 .list { max-width: 46rem; margin: 0 auto; padding: 1rem 1rem 4rem; }
 .list h1 { font-size: 1.2rem; }
 .list .top { display: flex; justify-content: space-between; align-items: center; }
-.item { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: .75rem; padding: .8rem 1rem; margin: .7rem 0; text-decoration: none; color: var(--text); }
+.item { display: flex; align-items: flex-start; gap: .8rem; background: var(--surface); border: 1px solid var(--border); border-radius: .75rem; padding: .8rem 1rem; margin: .7rem 0; color: var(--text); }
+.item > .lnk { flex: 1; min-width: 0; text-decoration: none; color: inherit; }
 .item:hover { border-color: var(--accent); }
 .item .t { font-family: var(--en-font); font-size: 1.05rem; line-height: 1.4; }
 .item .m { color: var(--muted); font-size: .85rem; margin-top: .3rem; }
@@ -142,8 +143,42 @@ dialog figure img.big { max-width: none; width: 62rem; cursor: zoom-out; }
 .resume .lab { font-size: .78rem; color: var(--accent); font-weight: 700; letter-spacing: .04em; }
 .resume .t { display: block; font-family: var(--en-font); font-size: 1.2rem; line-height: 1.4; margin: .3rem 0; color: var(--text); text-decoration: none; }
 .resume .m { color: var(--muted); font-size: .85rem; }
-.resume .acts { display: flex; gap: .7rem; align-items: center; margin-top: .8rem; }
+.resume .acts { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; margin-top: .8rem; }
 .resume .btn { margin: 0; width: auto; padding: .6rem 1.4rem; text-decoration: none; display: inline-block; }
 .resume .icon { text-decoration: none; color: inherit; }
 .list .sub { font-size: .8rem; color: var(--muted); margin-top: 1.2rem; }
 @media (max-width: 40rem) { .sync { display: none; } .bar .sync[data-s="pending"] { display: block; } }
+
+/* 4b 完読・線（蛍光ペン） */
+.item.done { background: transparent; }
+.item.done .t { color: var(--muted); }
+.chk { flex: none; display: flex; flex-direction: column; align-items: center; gap: .2rem; min-width: 3rem; padding: .1rem 0;
+  border: 0; background: transparent; color: var(--muted); font-size: .72rem; line-height: 1.2; cursor: pointer; }
+.chk .box { width: 1.6rem; height: 1.6rem; display: grid; place-items: center; border: 2px solid var(--border); border-radius: .4rem;
+  font-size: 1rem; font-weight: 700; line-height: 1; }
+.chk:hover .box { border-color: var(--accent); }
+.chk.on { color: var(--accent); }
+.chk.on .box { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.resume .acts button.icon { margin-left: auto; }
+.donebox { margin: 2.5rem 0 0 2.7rem; padding: 1.2rem; border: 1px dashed var(--border); border-radius: .75rem; text-align: center; }
+.donebox .btn { width: auto; margin: 0; padding: .65rem 1.8rem; }
+.donebox .hint { font-size: .8rem; color: var(--muted); margin: .5rem 0 0; }
+.donebox .ok { color: var(--accent); font-weight: 700; margin: 0 0 .7rem; }
+.donebox .acts { display: flex; gap: .7rem; justify-content: center; }
+.donebox .acts a { text-decoration: none; color: inherit; }
+
+mark.hl { color: inherit; padding: 0; background: linear-gradient(transparent 58%, var(--hl) 58%);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+mark.hl.sel { background: var(--hl); outline: 2px solid var(--accent); outline-offset: 1px; }
+mark.hl.flash { background: var(--hl); transition: background .3s; }
+.hlbar { position: fixed; left: 50%; bottom: calc(1.2rem + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 45; display: none; }
+.hlbar.on { display: block; }
+.hlbar button { border: 0; border-radius: 2rem; padding: .75rem 1.6rem; background: var(--text); color: var(--bg); font-weight: 600;
+  box-shadow: 0 2px 12px rgba(0,0,0,.28); cursor: pointer; white-space: nowrap; -webkit-user-select: none; user-select: none; }
+.hlbar button::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .5em; vertical-align: -.1em;
+  background: #ffe45c; border-radius: .2em; }
+.toc a.hlq { font-family: var(--en-font); font-size: .84rem; }
+.toc a.hlq .pn { font-family: var(--ja-font); color: var(--muted); font-size: .72rem; margin-right: .4rem; }
+.toc a.hlq .q { background: linear-gradient(transparent 58%, var(--hl) 58%); }
+.toc .none { font-size: .8rem; color: var(--muted); margin: .2rem .4rem; line-height: 1.5; }
+@media (max-width: 40rem) { .donebox { margin-left: 0; } }

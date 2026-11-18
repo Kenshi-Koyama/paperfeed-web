@@ -70,6 +70,38 @@ export function createSync(sb) {
     saveAppState(key, mode, lang) {
       enqueue("app_state", "app_state", "user_id", { zotero_key: key, mode, settings: { lang } });
     },
+    // 完読。外すときは done = false
+    saveFinished(key, done) {
+      const row = enqueue(`finished:${key}`, "finished", "user_id,zotero_key", { zotero_key: key, done, finished_at: done ? now() : null })
+        || { zotero_key: key, done, finished_at: done ? now() : null, updated_at: now() };
+      const c = cacheGet("finished", {});
+      c[key] = row;
+      cacheSet("finished", c);
+      return row;
+    },
+    // 線。h = { id, zotero_key, para_id, start_pos, end_pos, quote, deleted }
+    saveHighlight(h) {
+      const row = enqueue(`highlights:${h.id}`, "highlights", "user_id,id", h) || { ...h, updated_at: now() };
+      const c = cacheGet("hl:" + h.zotero_key, {});
+      c[h.id] = row;
+      cacheSet("hl:" + h.zotero_key, c);
+    },
+
+    // 完読した論文 { 番号: { done, finished_at, updated_at } }
+    async loadFinished() {
+      const r = await sb.from("finished").select("zotero_key,done,finished_at,updated_at");
+      let map;
+      if (r.error) map = cacheGet("finished", {});
+      else {
+        map = {};
+        for (const x of r.data) map[x.zotero_key] = x;
+        cacheSet("finished", map);
+      }
+      for (const o of readQ()) {
+        if (o.table === "finished" && (!map[o.row.zotero_key] || o.row.updated_at > map[o.row.zotero_key].updated_at)) map[o.row.zotero_key] = o.row;
+      }
+      return map;
+    },
 
     // 全体の状態（最後に読んだ論文・読み方・英日の設定）
     async loadState() {
@@ -81,12 +113,20 @@ export function createSync(sb) {
       return s;
     },
 
-    // 1本の論文のメモと位置
+    // 1本の論文のメモ・位置・線
     async loadPaper(key) {
-      const [n, p] = await Promise.all([
+      const [n, p, h] = await Promise.all([
         sb.from("notes").select("para_id,body,updated_at").eq("zotero_key", key),
         sb.from("positions").select("para_id,updated_at").eq("zotero_key", key).maybeSingle(),
+        sb.from("highlights").select("id,zotero_key,para_id,start_pos,end_pos,quote,deleted,updated_at").eq("zotero_key", key),
       ]);
+      let hl;
+      if (h.error) hl = cacheGet("hl:" + key, {});
+      else {
+        hl = {};
+        for (const x of h.data) hl[x.id] = x;
+        cacheSet("hl:" + key, hl);
+      }
       let notes;
       if (n.error) notes = cacheGet("notes:" + key, {});
       else {
@@ -103,8 +143,10 @@ export function createSync(sb) {
           notes[o.row.para_id] = { body: o.row.body, ts: o.row.updated_at };
         }
         if (o.table === "positions" && (!pos || o.row.updated_at > pos.updated_at)) pos = o.row;
+        if (o.table === "highlights" && (!hl[o.row.id] || o.row.updated_at > hl[o.row.id].updated_at)) hl[o.row.id] = o.row;
       }
-      return { notes, position: pos ? pos.para_id : null };
+      const highlights = Object.values(hl).filter((x) => !x.deleted);
+      return { notes, position: pos ? pos.para_id : null, highlights };
     },
   };
 }

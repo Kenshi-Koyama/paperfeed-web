@@ -3,6 +3,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
 import { createSync } from "./sync.js";
+import { rangeParts, locate, paint } from "./highlight.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const sync = createSync(sb);
@@ -18,6 +19,13 @@ const app = $("#app");
 // 文字列を安全にする（<sub> と <sup> だけ残す）
 const safe = (s) => (s || "").replace(/&(?!(?:lt|gt|amp|quot|#\d+);)/g, "&amp;").replace(/<(?!\/?(?:sub|sup)>)/g, "&lt;");
 const attr = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); // ただの文字（線を引いた文字など）
+// 日付を「11/18」の形に（今年でなければ年も付ける）
+const shortDate = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return (d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + "/" : "") + (d.getMonth() + 1) + "/" + d.getDate();
+};
 
 // 設定の保存（この端末だけ。段4-3で Supabase に移す）
 const pref = {
@@ -72,31 +80,55 @@ async function showList() {
   document.title = "PaperFeed";
   app.innerHTML = `<div class="list"><div class="top"><h1>精読する論文</h1><button class="icon" id="out">ログアウト</button></div><div id="items" class="msg">読み込み中…</div></div>`;
   $("#out").onclick = () => sb.auth.signOut();
-  const [{ data, error }, state] = await Promise.all([
+  const [{ data, error }, state, fin] = await Promise.all([
     sb.from("papers").select("zotero_key,title,authors,journal,year,tags,has_fulltext").order("updated_at", { ascending: false }),
     sync.loadState(),
+    sync.loadFinished(),
   ]);
   const box = $("#items");
   if (error) { box.textContent = "論文の一覧を取得できませんでした。"; return; }
   const rows = data.filter((p) => p.has_fulltext && (p.tags || []).includes("PaperFeed_CloseReading"));
   if (!rows.length) { box.textContent = "精読できる論文がまだありません。"; return; }
-  box.className = ""; box.innerHTML = "";
-  const last = state && rows.find((p) => p.zotero_key === state.zotero_key);
-  if (last) {
-    const c = el("div", "resume");
-    c.innerHTML = `<div class="lab">続きから読む</div><a class="t" href="#/p/${last.zotero_key}">${safe(last.title)}</a>
-      <div class="m">${safe(last.authors)} · ${safe(last.journal)} (${last.year || ""})</div>
-      <div class="acts"><a class="btn go" href="#/p/${last.zotero_key}">続きを読む</a><a class="icon" href="#/p/${last.zotero_key}/top">最初から読む</a></div>`;
-    box.append(c);
-    box.append(el("div", "sub", "ほかの論文"));
-  }
-  for (const p of rows) {
-    if (p === last) continue;
-    const a = el("a", "item");
-    a.href = "#/p/" + p.zotero_key;
-    a.innerHTML = `<div class="t">${safe(p.title)}</div><div class="m">${safe(p.authors)} · ${safe(p.journal)} (${p.year || ""})</div>`;
-    box.append(a);
-  }
+  const isDone = (p) => !!(fin[p.zotero_key] && fin[p.zotero_key].done);
+  const chk = (p) => {
+    const f = fin[p.zotero_key];
+    return isDone(p)
+      ? `<button class="chk on" data-fin="${p.zotero_key}" aria-pressed="true" aria-label="完読（${shortDate(f.finished_at)}）。押すと外す"><span class="box">✓</span><span class="lb">${shortDate(f.finished_at)}</span></button>`
+      : `<button class="chk" data-fin="${p.zotero_key}" aria-pressed="false" aria-label="完読にする"><span class="box"></span><span class="lb">完読</span></button>`;
+  };
+  const item = (p) => {
+    const d = el("div", "item" + (isDone(p) ? " done" : ""));
+    d.innerHTML = `<a class="lnk" href="#/p/${p.zotero_key}"><div class="t">${safe(p.title)}</div><div class="m">${safe(p.authors)} · ${safe(p.journal)} (${p.year || ""})</div></a>${chk(p)}`;
+    return d;
+  };
+  const render = () => {
+    box.className = ""; box.innerHTML = "";
+    const todo = rows.filter((p) => !isDone(p));
+    const done = rows.filter(isDone).sort((a, b) => String(fin[b.zotero_key].finished_at || "").localeCompare(String(fin[a.zotero_key].finished_at || "")));
+    const last = state && todo.find((p) => p.zotero_key === state.zotero_key);
+    if (last) {
+      const c = el("div", "resume");
+      c.innerHTML = `<div class="lab">続きから読む</div><a class="t" href="#/p/${last.zotero_key}">${safe(last.title)}</a>
+        <div class="m">${safe(last.authors)} · ${safe(last.journal)} (${last.year || ""})</div>
+        <div class="acts"><a class="btn go" href="#/p/${last.zotero_key}">続きを読む</a><a class="icon" href="#/p/${last.zotero_key}/top">最初から読む</a>
+        <button class="icon" data-fin="${last.zotero_key}">完読にする</button></div>`;
+      box.append(c);
+      if (todo.length > 1) box.append(el("div", "sub", "ほかの論文"));
+    }
+    for (const p of todo) if (p !== last) box.append(item(p));
+    if (!todo.length) box.append(el("div", "sub", "まだ読み終えていない論文はありません。"));
+    if (done.length) {
+      box.append(el("div", "sub", `完読した論文（${done.length}）`));
+      for (const p of done) box.append(item(p));
+    }
+  };
+  box.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-fin]"); if (!b) return;
+    const k = b.dataset.fin;
+    fin[k] = sync.saveFinished(k, !(fin[k] && fin[k].done));
+    render();
+  });
+  render();
 }
 
 // ---------------- 精読
@@ -108,8 +140,7 @@ async function showPaper(uid, key, jumpTo) {
   if (signal.aborted) return;
   if (dl.error) { app.innerHTML = `<div class="msg">この論文を開けませんでした。<br><a href="#/">一覧へ戻る</a></div>`; return; }
   const P = JSON.parse(await dl.data.text());
-  const saved = await sync.loadPaper(key);
-  const state = await sync.loadState();
+  const [saved, state, fin] = await Promise.all([sync.loadPaper(key), sync.loadState(), sync.loadFinished()]);
   if (signal.aborted) return;
   const notes = saved.notes; // { 段落の番号: { body, ts } }
 
@@ -219,15 +250,108 @@ async function showPaper(uid, key, jumpTo) {
     main.append(r);
   }
 
+  // 完読（いちばん下）
+  const doneBox = el("section", "donebox"); doneBox.id = "finish";
+  main.append(doneBox);
+  let finRow = fin[key];
+  const renderDone = () => {
+    doneBox.innerHTML = finRow && finRow.done
+      ? `<p class="ok">✓ ${shortDate(finRow.finished_at)} に完読</p><div class="acts"><a class="icon" href="#/">一覧へ戻る</a><button class="icon" data-fin>完読を外す</button></div>`
+      : `<button class="btn" data-fin>読み終えた（完読にする）</button><p class="hint">一覧では「完読した論文」に移ります。</p>`;
+  };
+  doneBox.addEventListener("click", (ev) => {
+    if (!ev.target.closest("[data-fin]")) return;
+    finRow = sync.saveFinished(key, !(finRow && finRow.done));
+    renderDone();
+  });
+  renderDone();
+
   // 目次
   const jl = (id, cls, text) => `<a class="${cls}" href="#/p/${key}/${id}" data-jump="${id}">${text}</a>`;
   toc.innerHTML = "<h3>節</h3>" + tocItems.map((e) => jl(e.id, "lv" + e.level, safe(e.text))).join("") +
     "<h3>図表</h3>" + P.floats.map((f) => jl(f.id, "", `${safe(f.label)}　${safe(f.title_ja || f.title)}`)).join("") +
+    `<div id="tocHl"></div>` +
     `<h3>そのほか</h3>${jl("references", "", "References")}${pdfUrl ? `<a href="${attr(pdfUrl)}" target="_blank" rel="noopener">元の PDF</a>` : ""}`;
   const closeToc = () => document.body.classList.remove("toc-open");
   $("#tocBtn").onclick = () => document.body.classList.toggle("toc-open");
   $("#shade").onclick = closeToc;
   toc.addEventListener("click", (ev) => { if (ev.target.closest("a")) closeToc(); });
+
+  // 線（英語の本文に引く蛍光ペン）
+  const hls = new Map(saved.highlights.map((h) => [h.id, h])); // { 線の番号: 線 }
+  const hlTargets = [...main.querySelectorAll(".unit[id] > .en")]; // 線を引ける所：要旨と本文の段落の英語
+  const origHtml = new Map(hlTargets.map((x) => [x.parentElement.id, x.innerHTML]));
+  const order = new Map(hlTargets.map((x, i) => [x.parentElement.id, i]));
+  const elById = Object.fromEntries(P.elements.map((e) => [e.id, e]));
+  const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+  const paintPara = (pid) => {
+    const u = document.getElementById(pid);
+    const enEl = u && $(":scope > .en", u);
+    if (!enEl || !origHtml.has(pid)) return;
+    enEl.innerHTML = origHtml.get(pid);
+    const text = enEl.textContent;
+    for (const h of [...hls.values()].filter((x) => x.para_id === pid).sort((a, b) => a.start_pos - b.start_pos)) {
+      const at = locate(text, h);
+      if (!at) continue;
+      const mk = paint(enEl, at[0], at[1], h.id);
+      if (mk) mk.id = "hl-" + h.id;
+    }
+  };
+  const renderHlToc = () => {
+    const list = [...hls.values()].sort((a, b) => (order.get(a.para_id) ?? 1e9) - (order.get(b.para_id) ?? 1e9) || a.start_pos - b.start_pos);
+    const where = (pid) => pid === "abstract" ? "要旨" : (elById[pid] && elById[pid].n ? "¶" + elById[pid].n : "");
+    const cut = (s) => (s.length > 80 ? s.slice(0, 80) + "…" : s);
+    $("#tocHl").innerHTML = `<h3>線を引いたところ（${list.length}）</h3>` + (list.length
+      ? list.map((h) => jl("hl-" + h.id, "hlq", `<span class="pn">${where(h.para_id)}</span><span class="q">${esc(cut(h.quote))}</span>`)).join("")
+      : `<p class="none">まだありません。英語の本文を選ぶと「線を引く」が出ます。</p>`);
+  };
+  new Set([...hls.values()].map((h) => h.para_id)).forEach(paintPara);
+  renderHlToc();
+
+  // 文字を選ぶと下に「線を引く」、線を押すと「線を消す」を出す
+  const bar = el("div", "hlbar", `<button type="button"></button>`);
+  const barBtn = $("button", bar);
+  document.body.append(bar);
+  signal.addEventListener("abort", () => bar.remove());
+  let barMode = null, pending = null, delId = null, hideTimer;
+  const showBar = (mode) => {
+    clearTimeout(hideTimer);
+    barMode = mode;
+    barBtn.textContent = mode === "add" ? "線を引く" : "線を消す";
+    bar.classList.add("on");
+  };
+  const hideBar = () => {
+    clearTimeout(hideTimer);
+    barMode = null; pending = null; delId = null;
+    bar.classList.remove("on");
+    document.querySelectorAll("mark.hl.sel").forEach((x) => x.classList.remove("sel"));
+  };
+  document.addEventListener("selectionchange", () => {
+    const s = getSelection();
+    const parts = s.rangeCount && !s.isCollapsed ? rangeParts(s.getRangeAt(0), hlTargets) : [];
+    if (parts.length) { if (barMode === "del") hideBar(); pending = parts; showBar("add"); }
+    // 選択が消えても少し待つ（スマホでは、ボタンを押した瞬間に選択が消えることがあるため）
+    else if (barMode === "add") { clearTimeout(hideTimer); hideTimer = setTimeout(hideBar, 400); }
+  }, { signal });
+  barBtn.addEventListener("pointerdown", (ev) => ev.preventDefault()); // PC で押しても選んだ範囲が消えないように
+  barBtn.onclick = () => {
+    if (barMode === "add" && pending) {
+      const touched = new Set();
+      for (const p of pending) {
+        const h = { id: newId(), zotero_key: key, para_id: p.el.parentElement.id, start_pos: p.start, end_pos: p.end, quote: p.quote, deleted: false };
+        hls.set(h.id, h); sync.saveHighlight(h); touched.add(h.para_id);
+      }
+      getSelection().removeAllRanges();
+      touched.forEach(paintPara);
+    } else if (barMode === "del" && delId && hls.has(delId)) {
+      const h = hls.get(delId);
+      hls.delete(delId);
+      sync.saveHighlight({ ...h, deleted: true });
+      paintPara(h.para_id);
+    }
+    hideBar();
+    renderHlToc();
+  };
 
   // 表示の切り替え
   const units = [...document.querySelectorAll("main .unit[id^='e']")];
@@ -247,8 +371,15 @@ async function showPaper(uid, key, jumpTo) {
   const dlg = $("#dlg");
   let dlgTarget = null;
   const jump = (id, smooth = true) => {
-    const t = document.getElementById(id); if (!t) return;
+    let t = document.getElementById(id);
+    if (!t && id.startsWith("hl-")) { const h = hls.get(id.slice(3)); t = h && document.getElementById(h.para_id); } // 線が見つからなければ段落へ
+    if (!t) return;
     const d = t.closest("details"); if (d) d.open = true;
+    if (!t.getClientRects().length) { // 英語が隠れている段落の線は、その段落を英語に切り替えて見せる
+      const u = t.closest(".unit");
+      if (u && document.body.dataset.mode !== "both") u.classList.toggle("flip");
+      if (!t.getClientRects().length) t = u || t;
+    }
     t.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
     t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1600);
   };
@@ -262,12 +393,19 @@ async function showPaper(uid, key, jumpTo) {
   $("#dlgGo").onclick = () => { dlg.close(); jump(dlgTarget); };
   dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); if (ev.target.tagName === "IMG") ev.target.classList.toggle("big"); }, { signal });
   document.addEventListener("click", (ev) => {
+    if (barMode === "del" && !ev.target.closest(".hlbar")) hideBar();
     if (!ev.target.closest("main, .toc")) return;
     const ref = ev.target.closest("a.fref");
     if (ref) { ev.preventDefault(); openFloat(ref.dataset.float); return; }
     const j = ev.target.closest("a[data-jump]");
     if (j) { ev.preventDefault(); jump(j.dataset.jump); return; }
     if (ev.target.tagName === "IMG" && ev.target.closest("figure.float")) { openFloat(ev.target.closest("figure.float").id); return; }
+    const mk = ev.target.closest("mark.hl");
+    if (mk && !String(getSelection()).trim()) {
+      delId = mk.dataset.hl; showBar("del");
+      document.querySelectorAll(`mark.hl[data-hl="${CSS.escape(delId)}"]`).forEach((x) => x.classList.add("sel"));
+      return;
+    }
     const num = ev.target.closest(".num");
     if (num && num.closest(".unit[id^='e']")) { editMemo(num.closest(".unit")); return; }
     if (ev.target.closest("a, textarea, .memo")) return;
