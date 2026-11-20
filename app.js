@@ -1,9 +1,9 @@
 // PaperFeed の画面。ログイン → 論文のリスト → 精読。
 // 本文・画像・PDF は Supabase の非公開の置き場から、ログイン後に取得する。
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
-import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js";
-import { createSync } from "./sync.js";
-import { rangeParts, locate, paint } from "./highlight.js";
+import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from "./config.js?v=20261120";
+import { createSync } from "./sync.js?v=20261120";
+import { rangeParts, locate, paint } from "./highlight.js?v=20261120";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const sync = createSync(sb);

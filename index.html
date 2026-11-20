@@ -4,17 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PaperFeed</title>
-<link rel="stylesheet" href="style.css">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/icon-180.png">
-<link rel="icon" href="icons/icon-192.png">
-<meta name="theme-color" content="#2f5d8a">
+<!-- 画面を直したら、?v= の番号（index.html・app.js・manifest.webmanifest）をそろえて上げる。古いファイルが残らないように -->
+<link rel="stylesheet" href="style.css?v=20261120">
+<link rel="manifest" href="manifest.webmanifest?v=20261120">
+<link rel="apple-touch-icon" href="icons/icon-180.png?v=20261120">
+<link rel="icon" href="icons/icon-192.png?v=20261120">
+<meta name="theme-color" content="#43B0B1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="PaperFeed">
 </head>
 <body data-mode="both">
 <div id="app"></div>
 <dialog id="dlg"><div class="dbar"><button class="icon" id="dlgGo">本文の位置へ</button><button class="icon" id="dlgClose">閉じる</button></div><div id="dlgBody"></div></dialog>
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=20261120"></script>
 </body>
 </html>
